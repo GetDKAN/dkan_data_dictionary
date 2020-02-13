@@ -1,0 +1,82 @@
+version: 2
+
+references:
+  install_tests: &install_tests
+    run:
+      name: Install tests
+      command: |
+        export PATH=$PATH:~/dkan-tools/bin
+        dktl test:init
+
+jobs:
+  build_test:
+    machine:
+      image: circleci/classic:latest
+    environment:
+      DKTL_CHOWN: False
+      DKTL_NO_PTY: True
+    steps:
+      - checkout
+      - run:
+          name: Package module
+          command: |
+            mkdir ~/dkan_data_dictionary
+            mv ~/project/* ~/dkan_data_dictionary
+            ls -la ~
+            whoami
+      - run:
+          name: Install DKTL
+          command: |
+            cd ~
+            git clone https://github.com/GetDKAN/dkan-tools.git
+            chmod 777 ./dkan-tools/bin/dktl
+      - run:
+          name: Build codebase
+          command: |
+            export PATH=$PATH:~/dkan-tools/bin
+            cd ~/project
+            dktl init
+            mv ~/dkan_data_dictionary ~/project
+            dktl dkan:get 7.x-1.x
+            dktl dc exec cli cp -R /var/www/dkan_data_dictionary/test/features /var/www/src/test
+            dktl dc exec cli mv /var/www/dkan_data_dictionary  /var/www/src/modules
+            dktl make
+      - *install_tests
+      - run:
+          name: Install Site
+          command: |
+            export PATH=$PATH:~/dkan-tools/bin
+            dktl install
+            dktl drush en -y dkan_data_dictionary
+      - run:
+          name: Run behat tests
+          command: |
+            export PATH=$PATH:~/dkan-tools/bin
+            dktl docker:compose exec -T cli mkdir src/test/assets/junit/features
+            test_list=$(mktemp)
+            exit_status=0
+            (cd src/test; circleci tests glob features/*.feature | circleci tests split --split-by=filesize )> $test_list
+            echo "TESTING FEATURES:"
+            cat $test_list
+            while read file; do
+              echo "FEATURE FILE: $file"
+              if ! dktl test:behat-custom $file; then
+                exit_status=1;
+                echo "FAILED FEATURE: $file";
+              fi;
+              if [ -f src/test/assets/junit/dkan.xml ]; then
+                base="$(basename $file .feature)"
+                dktl docker:compose exec -T cli mv src/test/assets/junit/dkan.xml src/test/assets/junit/features/${base}.xml </dev/null
+              fi
+            done < $test_list
+            exit $exit_status
+      - store_artifacts:
+         path: ~/project/dkan/test/assets
+      - store_test_results:
+         path: ~/project/src/test/assets/junit
+
+workflows:
+  version: 2
+  build_and_test:
+    jobs:
+      - build_test
