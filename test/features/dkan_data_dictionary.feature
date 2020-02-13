@@ -1,3 +1,4 @@
+@api
 Feature: Resource-level data dictionaries
 
   Background:
