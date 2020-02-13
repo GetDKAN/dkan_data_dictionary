@@ -16,7 +16,6 @@ function dkan_data_dictionary_form_resource_node_form_alter(&$form, &$form_state
   // Load jsoneditor libray and attach to resource form.
   $form['#attached']['libraries_load'][] = array('jsoneditor');
   $form['#attached']['js'][] = drupal_get_path('module', 'dkan_data_dictionary') . '/js/editor.js';
-  drupal_add_css(drupal_get_path('module', 'dkan_data_dictionary') . '/css/dkan_data_dictionary.css');
   $form['#validate'][] = 'dkan_data_dictionary_validate_resource';
 
   // Add javascript for csv data dictionary schema
