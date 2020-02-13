@@ -1,3 +1,11 @@
 #field-describedby-schema-add-more-wrapper .jsoneditor {
   height: 400px;
 }
+
+.node-resource .field-name-field-describedby-spec {
+  margin-bottom: 20px;
+}
+
+.node-resource .field-name-field-describedby-schema table.json-schema {
+  margin-top: 0;
+}

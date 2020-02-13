@@ -1,4 +1,13 @@
-@noworkflow @javascript
+@api
+Feature: Resource-level data dictionaries
+
+  Background:
+    Given users:
+      | name    | mail                | roles             |
+      | John    | john@example.com    | site manager      |
+      | Katie   | katie@example.com   | content creator   |
+
+  @noworkflow @javascript
   Scenario: Add a data dictionary
     Given resources:
       | title       | author   | published | description |
