@@ -1,0 +1,314 @@
+<?php
+
+/**
+ * @file
+ * Code for the DKAN Data Dictionary feature.
+ */
+
+include_once 'dkan_data_dictionary.features.inc';
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function dkan_data_dictionary_form_resource_node_form_alter(&$form, &$form_state) {
+  $lang = $form['language']['#value'];
+
+  // Load jsoneditor libray and attach to resource form.
+  $form['#attached']['libraries_load'][] = array('jsoneditor');
+  $form['#attached']['js'][] = drupal_get_path('module', 'dkan_data_dictionary') . '/js/editor.js';
+  drupal_add_css(drupal_get_path('module', 'dkan_data_dictionary') . '/css/dkan_data_dictionary.css');
+  $form['#validate'][] = 'dkan_data_dictionary_validate_resource';
+
+  // Add javascript for csv data dictionary schema
+  $fid = $form['field_describedby_file'][$lang][0]['#default_value']['fid'];
+  if ($fid !== 0) {
+    $valid = _dkan_data_dictionary_csv_is_schema($fid);
+  }
+  else {
+    $valid = false;
+  }
+
+  drupal_add_js(array('dkan_data_dictionary' => array('fileid' => $fid)), 'setting');
+  drupal_add_js(array('dkan_data_dictionary' => array('valid' => $valid)), 'setting');
+  drupal_add_js(drupal_get_path('module', 'dkan_data_dictionary') . '/js/dkan_data_dictionary.js');
+
+}
+
+/**
+ * Custom validation function for resource node
+ */
+function dkan_data_dictionary_validate_resource($form, &$form_state) {
+  $language = $form_state['values']['language'];
+  foreach ($form_state['values']['field_describedby_schema'][$language] as $item) {
+    if ($item['value'] !== '{}' && $item['value'] !== '') {
+      $schema = json_decode($item['value']);
+
+      if (json_last_error() !== JSON_ERROR_NONE) {
+        form_set_error('field_describedby_schema', t('JSON Schema provided is not valid JSON.'));
+      }
+    }
+  }
+}
+
+/**
+ *
+ * @param integer $fid
+ *
+ * @return boolean
+ */
+function _dkan_data_dictionary_csv_is_schema($fid) {
+  $file = file_load($fid);
+  if ($file->filemime === 'text/csv' && $file->filesize > 0) {
+    $url = drupal_realpath($file->uri);
+    $csv = fopen($url, "r");
+
+    if ($csv) {
+      $allowed = array('name','title','type','description','format','constraints','rdftype');
+      $required = array('name');
+
+      // Check the first line of the file to be sure all properties are valid.
+      $properties = fgetcsv($csv);
+      $invalid = array_diff(array_map('strtolower', $properties), $allowed);
+      $missing = array_diff($required, array_map('strtolower', $properties));
+
+      // Attempt to read the next line - check for at least one row of values.
+      $data = fgetcsv($csv);
+      fclose($csv);
+
+      if ($invalid || $missing || !$data) {
+        return FALSE;
+      }
+
+      return TRUE;
+
+    }
+    else {
+      return FALSE;
+    }
+  }
+}
+
+/**
+ * Implements hook_node_presave().
+ */
+function dkan_data_dictionary_node_presave($node) {
+  if ($node->type === 'resource') {
+    $lang = $node->language;
+    $files = (isset($node->field_describedby_file[$lang][0]['fid'])) ? count($node->field_describedby_file[$lang]) : 0;
+    $original_fid = (isset($node->original->field_describedby_file[$lang][0]['fid'])) ? $node->original->field_describedby_file[$lang][0]['fid'] : 0;
+
+    // If there is no schema file attached see if there was once before.
+    if ($files === 0 && $original_fid != 0) {
+      if (_dkan_data_dictionary_csv_is_schema($original_fid)) {
+        // If a valid schema file was previously supplied but removed -
+        // the JSON Schema field must also be emptied.
+        $node->field_describedby_schema[$lang][0]['value'] = '{}';
+      }
+    }
+    // Was a schema source file provided?
+    else if ($files === 1) {
+      $fid = $node->field_describedby_file[$lang][0]['fid'];
+
+      // If the supplied file is new process it otherwise skip processing.
+      if ($fid != $original_fid) {
+
+        // If the supplied file is a CSV and isn't empty.
+        if (_dkan_data_dictionary_csv_is_schema($fid)) {
+          $file = file_load($fid);
+          $url = drupal_realpath($file->uri);
+          $csv = fopen($url, "r");
+
+          if ($csv) {
+            $fields = array();
+
+            while ($lines[] = fgetcsv($csv)) {
+
+              if (count($lines) === 1) {
+                $properties = $lines[count($lines)-1];
+              }
+              else {
+                $current_item = $lines[count($lines)-1];
+                $field = new stdClass();
+
+                foreach($properties as $key => $property) {
+                  if (!empty($current_item[$key])) {
+                    if($property !== 'constraints') {
+                      $field->$property = $current_item[$key];
+                    }
+                    else {
+                      // Constraints require additional processing.
+                       $new_constraint = new stdClass();
+
+                      $constraints = explode(",", $current_item[$key]);
+                      foreach ($constraints as $constraint) {
+                        $parts = explode(":", $constraint);
+                        $new_constraint->$parts[0] = $parts[1];
+                      }
+
+                      $field->$property = $new_constraint;
+
+                    }
+                  }
+                }
+
+                $fields[] = $field;
+
+              }
+            }
+
+            // If we ended up with at least one valid field update JSON Schema.
+            if (count($fields) != 0) {
+              $json = new stdClass();
+              $json->fields = $fields;
+              $schema = json_encode($json);
+              $node->field_describedby_schema[$lang][0]['value'] = $schema;
+            }
+
+            fclose($csv);
+          }
+          else {
+            drupal_set_message(t('Unable to open the supplied schema file.'));
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_libraries_info().
+ */
+function dkan_data_dictionary_libraries_info() {
+  $libraries = array();
+  $libraries['jsoneditor'] = array(
+    'name' => 'JSONEditor',
+    'vendor url' => 'https://github.com/josdejong/jsoneditor',
+    'download url' => 'https://github.com/josdejong/jsoneditor/archive/master.zip',
+    'path' => '',
+    'version arguments' => array(
+      'file' => 'package.json',
+      'pattern' => '/"version": "(\d+\.\d+\.\d+)"/',
+    ),
+    'files' => array(
+      'js' => array(
+        'dist/jsoneditor.min.js',
+      ),
+      'css' => array(
+        'dist/jsoneditor.min.css',
+      ),
+    ),
+  );
+  return $libraries;
+}
+
+/**
+* Implements hook_field_formatter_info().
+*/
+function dkan_data_dictionary_field_formatter_info() {
+  return array(
+    'text_schema_table' => array(
+      'label' => t('Schema Table'),
+      'field types' => array('text_long'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_formatter_view().
+ */
+function dkan_data_dictionary_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $settings = $display['settings'];
+  $elements = array();
+
+  if ($display['type'] == 'text_schema_table') {
+    foreach ($items as $delta => $item) {
+      if ($item['value'] === '{}' || $item['value'] === '') {
+        // If this field value is empty unset it and skip display processing.
+        unset($items[$delta]);
+        continue;
+      }
+
+      $schema = json_decode($item['value']);
+
+      if (json_last_error() === JSON_ERROR_NONE && property_exists($schema, 'fields')) {
+        // Parse the schema array and build the table.
+        $headers = array();
+        $rows = array();
+
+        // Build our collection of unique table headers.
+        foreach ($schema->fields as $field) {
+          $item = (array) $field;
+          $new_keys = array_keys($item);
+          $headers = array_merge($headers, array_diff($new_keys, $headers));
+        }
+
+        // Check the set of values for each field description against all table headers.
+        foreach ($schema->fields as $field) {
+          $row = array();
+          $item = (array) $field;
+
+          foreach ($headers as $header) {
+            $column = '';
+
+            // Compare all properties for the current field definition ($item)
+            // against each table header ($headers).
+            // Default behavior:
+            // If the $item contains a value for the $header return it.
+            // If the $item does not contain a value for the $header return ''.
+            // Special cases can be defined using the switch statement below.
+            switch ($header) {
+              case 'format':
+                $column = (array_key_exists($header, $item)) ? $item[$header] : 'default';
+                break;
+
+              case 'constraints':
+                if (array_key_exists($header, $item)) {
+                  $constraints = (array) $item[$header];
+
+                  $column = implode(', ', array_map(
+                    function ($v, $k) { return sprintf("%s = %s", $k, $v); },
+                    $constraints,
+                    array_keys($constraints)
+                  ));
+                }
+                else {
+                  $column = '';
+                }
+                break;
+
+              default:
+                $column = (array_key_exists($header, $item)) ? $item[$header] : '';
+                break;
+            }
+
+            $row[] = array('data' => $column, 'class' => array('json-schema-item', 'json-schema-' . $header));
+
+          }
+
+          $rows[] = $row;
+
+        }
+
+        // Format headers.
+        foreach ($headers as $key => $header) {
+          $headers[$key] = array('data' => t(ucfirst($header)), 'class' => array('json-schema-item', 'json-schema-' . $header));
+        }
+
+        $elements[$delta] = array(
+          '#theme' => 'table',
+          '#header' => $headers,
+          '#rows' => $rows,
+          '#attributes' => array('class' => array('json-schema')),
+        );
+
+      }
+      else {
+        // If the supplied value isn't valid JSON or it is valid JSON but
+        // isn't a schema containing fields - simply output the raw text.
+        $elements[$delta] = array('#markup' => $item['value']);
+      }
+    }
+  }
+
+  return $elements;
+}
