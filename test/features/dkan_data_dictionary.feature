@@ -1,4 +1,6 @@
-@noworkflow @javascript
+Feature: Resource-level data dictionaries
+
+  @noworkflow @javascript
   Scenario: Add a data dictionary
     Given resources:
       | title       | author   | published | description |
