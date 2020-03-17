@@ -5,7 +5,7 @@ Resource-level data dictionaries based on https://frictionlessdata.io/specs/tabl
 
 ## License
 
-DKAN and related modules are freely-available under the ["GNU General Public License, version 3 or any later version"](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html) license.
+DKAN and related modules are freely-available under the ["GNU General Public License, version 3 or any later version"](https://www.gnu.org/licenses/gpl-3.0.html) license.
 
 ## Acknowledgements
 
